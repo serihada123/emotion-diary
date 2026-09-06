@@ -1,0 +1,5 @@
+# prototype migration artifacts (superseded by app/ - kept on disk for reference, not tracked)
+emotion-archive-prototype.jsx
+prototype-cleaned.jsx
+asset-mapping.json
+extract-assets.js
