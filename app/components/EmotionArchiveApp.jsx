@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect, useId } from "react";
+import React, { useState, useRef, useEffect, useLayoutEffect, useId } from "react";
 
 /* ---------- 캐릭터 이름 ---------- */
 const CHARACTER_NAME = "우루루";
@@ -13,10 +13,6 @@ const URUURU_HEARTPOSE_IMG = "/images/uruuru-heartpose.png";
 const URUURU_SMILEYPOSE_IMG = "/images/uruuru-smileypose.png";
 const URUURU_BURSTPOSE_IMG = "/images/uruuru-burstpose.png";
 const SKY_BG_IMG = "/images/sky-bg.jpg";
-const SKY_BG_SUNNY = "/images/sky-bg-sunny.jpg";
-const SKY_BG_RAIN = "/images/sky-bg-rain.jpg";
-const SKY_BG_CLOUDY = "/images/sky-bg-cloudy.jpg";
-const SKY_BG_SNOW = "/images/sky-bg-snow.jpg";
 
 /* ---------- 색상/스타일 토큰 (지금까지 확정된 목업 기준) ---------- */
 const COLORS = {
@@ -1371,8 +1367,23 @@ const EMOTION_REACTION = {
   편안함: "droop",
 };
 
+/* 앱을 그리는 고정 캔버스 크기 - 브라우저 창 크기에 맞춰 이 캔버스 전체를 축소/확대해서
+   보여준다(내부 스크롤 없이 한 화면에 다 보이도록). 남는 여백은 배경색으로 채워짐.
+   CANVAS_MARGIN_RATIO만큼 창 가장자리에 여백을 남겨서 "떠 있는 화면"처럼 보이게 함. */
+const DESIGN_WIDTH = 420;
+const DESIGN_HEIGHT = 840;
+const CANVAS_MARGIN_RATIO = 0.08; // 위아래/좌우 각 8% 정도 여백
+
+function computeFitScale() {
+  if (typeof window === "undefined") return 1;
+  const availableWidth = window.innerWidth * (1 - CANVAS_MARGIN_RATIO * 2);
+  const availableHeight = window.innerHeight * (1 - CANVAS_MARGIN_RATIO * 2);
+  return Math.min(availableWidth / DESIGN_WIDTH, availableHeight / DESIGN_HEIGHT);
+}
+
 /* ================= 메인 앱 ================= */
 export default function EmotionArchiveApp() {
+  const [scale, setScale] = useState(1);
   const [screen, setScreen] = useState("splash"); // splash | onboarding | chat | processing | result | archive | detail
   const [userMsgCount, setUserMsgCount] = useState(0);
   const [allUserText, setAllUserText] = useState("");
@@ -1420,6 +1431,17 @@ export default function EmotionArchiveApp() {
 
   useEffect(() => {
     return () => timers.current.forEach(clearTimeout);
+  }, []);
+
+  // 브라우저 창 크기가 바뀔 때마다 캔버스 축소/확대 비율 재계산 (스크롤 없이 항상 한 화면에 맞춤)
+  // useLayoutEffect: 페인트 전에 동기적으로 반영해서 초기 scale(1) 상태가 화면에 깜빡이지 않도록 함
+  useLayoutEffect(() => {
+    function updateScale() {
+      setScale(computeFitScale());
+    }
+    updateScale();
+    window.addEventListener("resize", updateScale);
+    return () => window.removeEventListener("resize", updateScale);
   }, []);
 
   // 우루루 성격 프롬프트는 서버(app/api/uruuru-chat)에서 관리 - 클라이언트는 대화 내용만 전달
@@ -1579,7 +1601,18 @@ export default function EmotionArchiveApp() {
   }
 
   return (
-    <div style={{ display: "flex", justifyContent: "center", padding: "16px 0", fontFamily: "'Jua', system-ui, sans-serif" }}>
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: "100vw",
+        height: "100dvh",
+        overflow: "hidden",
+        background: COLORS.bg,
+        fontFamily: "'Jua', system-ui, sans-serif",
+      }}
+    >
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Jua&family=Gaegu:wght@400;700&display=swap');
         @keyframes peng-bounce { 0%,100%{transform:translateY(0) rotate(0)} 25%{transform:translateY(-10px) rotate(-3deg)} 50%{transform:translateY(0)} 75%{transform:translateY(-10px) rotate(3deg)} }
@@ -1633,39 +1666,28 @@ export default function EmotionArchiveApp() {
         @keyframes bookmark-pulse { 0%,100%{box-shadow:0 3px 8px rgba(239,159,39,0.4)} 50%{box-shadow:0 3px 14px rgba(239,159,39,0.75)} }
         .bookmark-pop { animation: bookmark-pop 0.5s cubic-bezier(0.34,1.56,0.64,1) forwards, bookmark-pulse 2s ease-in-out 0.6s infinite; }
         .ea-btn { border: none; border-radius: 999px; font-size: 13px; font-weight: 500; cursor: pointer; font-family: inherit; }
-        .ea-input { border: 0.5px solid #D8D4C7; border-radius: 999px; padding: 8px 14px; font-size: 13px; outline: none; font-family: inherit; }
+        .ea-input { border: 0.5px solid #D8D4C7; border-radius: 999px; padding: 8px 14px; font-size: 13px; outline: none; font-family: inherit; color: ${COLORS.ink}; background: ${COLORS.white}; }
+        .ea-input::placeholder { color: ${COLORS.textMuted}; opacity: 1; }
         select, input, textarea, button { font-family: inherit; }
         textarea.ea-diary { width: 100%; border: 0.5px solid #E3DCC8; border-radius: 10px; padding: 10px; font-size: 13px; line-height: 1.7; color: ${COLORS.textSecondary}; font-family: inherit; resize: vertical; box-sizing: border-box; }
       `}</style>
 
       <div
         style={{
-          width: 320,
+          width: DESIGN_WIDTH,
+          height: DESIGN_HEIGHT,
+          flexShrink: 0,
+          transform: `scale(${scale})`,
           background: screen === "archive" || screen === "detail" ? COLORS.archiveBg : COLORS.bg,
-          borderRadius: 36,
-          border: `8px solid ${COLORS.ink}`,
           overflow: "hidden",
+          borderRadius: 32,
+          boxShadow: "0 24px 60px rgba(0,0,0,0.32), 0 4px 16px rgba(0,0,0,0.18)",
           boxSizing: "border-box",
-          minHeight: 560,
           display: "flex",
           flexDirection: "column",
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            padding: "6px 18px 2px",
-            fontSize: 11,
-            color: COLORS.ink,
-            fontWeight: 500,
-          }}
-        >
-          <span>9:41</span>
-          <span>●●●</span>
-        </div>
-
-        <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
           {screen === "splash" && (
             <SplashScreen onDone={() => setScreen("onboarding")} />
           )}
@@ -1682,7 +1704,6 @@ export default function EmotionArchiveApp() {
               showBookmark={userMsgCount >= 2}
               onBookmark={startProcessing}
               nudge={nudge}
-              sentiment={userMsgCount > 0 ? detectSentiment(allUserText) : null}
               isThinking={isThinking}
               isGeneratingResult={isGeneratingResult}
             />
@@ -1720,61 +1741,6 @@ export default function EmotionArchiveApp() {
       </div>
     </div>
   );
-}
-
-/* ---------- 감정 날씨 배경 (브리프 9절: 대화 중 감정에 따라 배경 분위기 변화) ---------- */
-function WeatherBackdrop({ sentiment }) {
-  if (sentiment === "positive") {
-    return (
-      <svg width="100%" height="100%" viewBox="0 0 320 260" style={{ position: "absolute", inset: 0 }} aria-hidden="true">
-        <defs>
-          <radialGradient id="sunGlow" cx="50%" cy="30%" r="60%">
-            <stop offset="0%" stopColor="#FFF3D0" stopOpacity="0.9" />
-            <stop offset="100%" stopColor="#FFF3D0" stopOpacity="0" />
-          </radialGradient>
-        </defs>
-        <rect x="0" y="0" width="320" height="260" fill="url(#sunGlow)" />
-        <circle cx="160" cy="50" r="3" fill="#FFFFFF" opacity="0.8" />
-        <circle cx="110" cy="80" r="2" fill="#FFFFFF" opacity="0.7" />
-        <circle cx="220" cy="70" r="2.5" fill="#FFFFFF" opacity="0.7" />
-        <circle cx="245" cy="110" r="1.8" fill="#FFFFFF" opacity="0.6" />
-      </svg>
-    );
-  }
-  if (sentiment === "negative") {
-    const drops = Array.from({ length: 14 });
-    return (
-      <svg width="100%" height="100%" viewBox="0 0 320 260" style={{ position: "absolute", inset: 0 }} aria-hidden="true">
-        <rect x="0" y="0" width="320" height="260" fill="#0E2740" opacity="0.06" />
-        {drops.map((_, i) => {
-          const x = (i * 47) % 320;
-          const y = (i * 63) % 220;
-          return (
-            <line
-              key={i}
-              x1={x}
-              y1={y}
-              x2={x - 6}
-              y2={y + 16}
-              stroke="#7FA8CC"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              opacity="0.45"
-            />
-          );
-        })}
-      </svg>
-    );
-  }
-  if (sentiment === "neutral") {
-    return (
-      <svg width="100%" height="100%" viewBox="0 0 320 260" style={{ position: "absolute", inset: 0 }} aria-hidden="true">
-        <ellipse cx="70" cy="50" rx="34" ry="12" fill="#FFFFFF" opacity="0.35" />
-        <ellipse cx="250" cy="80" rx="28" ry="10" fill="#FFFFFF" opacity="0.3" />
-      </svg>
-    );
-  }
-  return null;
 }
 
 /* ---------- 대화 중 반응 이모트 (느낌표/물음표/하트 팝업) ---------- */
@@ -1817,85 +1783,6 @@ function FloatingSymbol({ type }) {
   );
 }
 
-
-function WeatherIcon({ type, size = 15 }) {
-  const icons = {
-    auto: (
-      <>
-        <path d="M14 3 A11 11 0 0 1 14 25 Z" fill="#D3D1C7" />
-        <circle cx="14" cy="14" r="11" fill="none" stroke="#B4B2A9" strokeWidth="1.5" />
-      </>
-    ),
-    positive: (
-      <>
-        <circle cx="14" cy="14" r="6.5" fill="#FAC775" />
-        <path
-          d="M14 3 L14 6 M14 22 L14 25 M3 14 L6 14 M22 14 L25 14 M6.2 6.2 L8.3 8.3 M19.7 19.7 L21.8 21.8 M6.2 21.8 L8.3 19.7 M19.7 8.3 L21.8 6.2"
-          stroke="#EF9F27"
-          strokeWidth="1.6"
-          strokeLinecap="round"
-        />
-      </>
-    ),
-    neutral: (
-      <>
-        <path
-          d="M9 20 C6 20 4 18 4 15.5 C4 13.3 5.6 11.6 7.7 11.2 C8.4 8.3 11 6 14 6 C17.3 6 20 8.5 20.5 11.7 C22.5 12 24 13.7 24 15.8 C24 18.1 22.1 20 19.8 20 Z"
-          fill="#E6F1FB"
-          stroke="#B5D4F4"
-          strokeWidth="1.2"
-        />
-      </>
-    ),
-    negative: (
-      <>
-        <path
-          d="M8 16 C5.5 16 3.5 14.2 3.5 12 C3.5 10 5 8.4 6.9 8.1 C7.6 5.6 10 4 12.8 4 C15.9 4 18.5 6.3 18.9 9.3 C20.7 9.6 22 11 22 12.8 C22 14.7 20.3 16 18.3 16 Z"
-          fill="#B5D4F4"
-        />
-        <path d="M9 19 L7.5 23 M14 19 L12.5 23 M19 19 L17.5 23" stroke="#378ADD" strokeWidth="1.8" strokeLinecap="round" />
-      </>
-    ),
-    snow: (
-      <>
-        <path
-          d="M14 3 L14 25 M4.5 8.5 L23.5 19.5 M23.5 8.5 L4.5 19.5"
-          stroke="#85B7EB"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-        />
-        <path
-          d="M14 3 L11.5 5.5 M14 3 L16.5 5.5 M14 25 L11.5 22.5 M14 25 L16.5 22.5 M4.5 8.5 L7.5 8 M4.5 8.5 L6 11.2 M23.5 19.5 L21 19 M23.5 19.5 L22 16.8 M23.5 8.5 L21 9 M23.5 8.5 L22 11.2 M4.5 19.5 L7.5 20 M4.5 19.5 L6 16.8"
-          stroke="#85B7EB"
-          strokeWidth="1.4"
-          strokeLinecap="round"
-        />
-      </>
-    ),
-  };
-  return (
-    <svg width={size} height={size} viewBox="0 0 28 28" aria-hidden="true">
-      {icons[type] || icons.auto}
-    </svg>
-  );
-}
-
-/* 감정 날씨별 배경 이미지 매핑 */
-const WEATHER_BG_MAP = {
-  positive: SKY_BG_SUNNY,
-  neutral: SKY_BG_CLOUDY,
-  negative: SKY_BG_RAIN,
-  snow: SKY_BG_SNOW,
-};
-function getWeatherBg(weatherKey) {
-  // 날씨별 배경이 제대로 적용되지 않는 문제로 임시로 기본 배경만 사용
-  return SKY_BG_IMG;
-}
-/* 기본 배경(SKY_BG_IMG)과 동일하게 날씨 배경도 cover 방식으로 통일 (같은 크롭 레시피 적용) */
-/* 기본 배경(SKY_BG_IMG)만 cover 유지, 날씨별 배경은 원본 리소스 그대로(확대/왜곡 없이) 가로 폭에 맞춰 표시 */
-function getWeatherBgSize(weatherKey) {
-  return "cover";
-}
 
 /* ---------- 화면 1: 메인 대화 ---------- */
 /* ---------- 화면 0: 시작(온보딩) ---------- */
@@ -2144,18 +2031,19 @@ function OnboardingScreen({ onDone }) {
 }
 
 
-function ChatScreen({ charLine, lastUserText, inputValue, setInputValue, onSend, showBookmark, onBookmark, nudge, sentiment, isThinking, isGeneratingResult }) {
+function ChatScreen({ charLine, lastUserText, inputValue, setInputValue, onSend, showBookmark, onBookmark, nudge, isThinking, isGeneratingResult }) {
   return (
     <div
       style={{
         flex: 1,
         display: "flex",
         flexDirection: "column",
+        fontFamily: "'Pretendard', 'Noto Sans KR', system-ui, sans-serif",
         background: `${COLORS.bg} url(${SKY_BG_IMG}) center bottom / cover no-repeat`,
       }}
     >
-      <div style={{ padding: "2px 16px 0", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
-        <span style={{ fontSize: 12, color: "#FFFFFF", fontWeight: 600, textShadow: "0 1px 3px rgba(0,0,0,0.35)" }}>{CHARACTER_NAME}와 오늘 이야기</span>
+      <div style={{ padding: "20px 16px 10px", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
+        <span style={{ fontSize: 16, color: "#FFFFFF", fontWeight: 700, textShadow: "0 1px 3px rgba(0,0,0,0.35)" }}>{CHARACTER_NAME}와 오늘 이야기</span>
       </div>
 
       <div
@@ -2170,18 +2058,27 @@ function ChatScreen({ charLine, lastUserText, inputValue, setInputValue, onSend,
           overflow: "hidden",
         }}
       >
-        <WeatherBackdrop sentiment={sentiment} />
         <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", alignItems: "center" }}>
-        <div style={{ minHeight: 30, textAlign: "center", marginBottom: 2, padding: "0 8px" }}>
-          {lastUserText && (
-            <>
-              <p style={{ fontSize: 11, color: "#4A5A63", margin: "0 0 2px" }}>방금 나눈 이야기</p>
-              <p style={{ fontSize: 12.5, color: COLORS.textSecondary, margin: 0, lineHeight: 1.5 }}>
-                {lastUserText}
-              </p>
-            </>
-          )}
-        </div>
+        {lastUserText && (
+          <div
+            style={{
+              background: COLORS.white,
+              border: `2.5px solid ${COLORS.ink}`,
+              borderRadius: 18,
+              padding: "10px 18px",
+              fontSize: 13.5,
+              fontWeight: 500,
+              color: COLORS.ink,
+              maxWidth: 230,
+              textAlign: "center",
+              lineHeight: 1.5,
+              boxShadow: "0 3px 8px rgba(0,0,0,0.08)",
+              marginBottom: 10,
+            }}
+          >
+            {lastUserText}
+          </div>
+        )}
 
         <div style={{ position: "relative" }}>
           <div
@@ -2218,14 +2115,14 @@ function ChatScreen({ charLine, lastUserText, inputValue, setInputValue, onSend,
               bottom: 4,
               transform: "translateX(-50%)",
               zIndex: 0,
-              width: 130,
-              height: 24,
+              width: 155,
+              height: 28,
               borderRadius: "50%",
               background: "radial-gradient(ellipse at center, rgba(10,15,20,0.42) 0%, rgba(10,15,20,0.24) 45%, rgba(10,15,20,0) 78%)",
             }}
           />
           <div style={{ position: "relative", zIndex: 1 }}>
-            <PenguinCharacter reaction={nudge ? "bounce" : "idle"} size={220} />
+            <PenguinCharacter reaction={nudge ? "bounce" : "idle"} size={260} />
           </div>
         </div>
         </div>
@@ -2307,7 +2204,7 @@ function ChatScreen({ charLine, lastUserText, inputValue, setInputValue, onSend,
 }
 
 /* ---------- 화면 2: 감정 처리 (흡수 → 반응 → 오브젝트 등장) ---------- */
-function ProcessingScreen({ stage, lastUserText, result, weatherKey }) {
+function ProcessingScreen({ stage, lastUserText, result }) {
   const reaction = EMOTION_REACTION[result.primaryEmotion] || "bounce";
   const label =
     stage === 1
@@ -2337,7 +2234,7 @@ function ProcessingScreen({ stage, lastUserText, result, weatherKey }) {
         alignItems: "center",
         justifyContent: "center",
         padding: "20px 0",
-        background: `${COLORS.bg} url(${getWeatherBg(weatherKey)}) center bottom / ${getWeatherBgSize(weatherKey)} no-repeat`,
+        background: `${COLORS.bg} url(${SKY_BG_IMG}) center bottom / cover no-repeat`,
       }}
     >
       {stage <= 1 && (
@@ -2448,7 +2345,7 @@ function EmotionSelect({ value, onChange }) {
   );
 }
 
-function ResultScreen({ result, setResult, onSave, weatherKey }) {
+function ResultScreen({ result, setResult, onSave }) {
   return (
     <div
       style={{
@@ -2457,7 +2354,7 @@ function ResultScreen({ result, setResult, onSave, weatherKey }) {
         flexDirection: "column",
         padding: "10px 18px 16px",
         overflowY: "auto",
-        background: `${COLORS.bg} url(${getWeatherBg(weatherKey)}) center bottom / ${getWeatherBgSize(weatherKey)} no-repeat`,
+        background: `${COLORS.bg} url(${SKY_BG_IMG}) center bottom / cover no-repeat`,
       }}
     >
       <p style={{ fontSize: 12, color: "#4A5A63", textAlign: "center", margin: "4px 0 10px" }}>기록 결과</p>
@@ -2568,7 +2465,7 @@ function ArchiveScreen({ entries, onOpen, onReset }) {
           "radial-gradient(ellipse at 50% -10%, #F1E9FF 0%, #DCEBFC 45%, #C9E4F2 100%)",
       }}
     >
-      <div style={{ padding: "6px 18px 4px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <div style={{ padding: "22px 18px 4px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <p style={{ fontSize: 15, fontWeight: 500, color: COLORS.ink, margin: 0 }}>감정 아카이브</p>
         {!confirmingReset && (
           <button
