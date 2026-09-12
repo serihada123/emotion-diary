@@ -1436,12 +1436,28 @@ export default function EmotionArchiveApp() {
   // 브라우저 창 크기가 바뀔 때마다 캔버스 축소/확대 비율 재계산 (스크롤 없이 항상 한 화면에 맞춤)
   // useLayoutEffect: 페인트 전에 동기적으로 반영해서 초기 scale(1) 상태가 화면에 깜빡이지 않도록 함
   useLayoutEffect(() => {
+    let lastWidth = window.innerWidth;
+
     function updateScale() {
+      const activeTag = document.activeElement?.tagName;
+      const isTyping = activeTag === "INPUT" || activeTag === "TEXTAREA";
+      const widthChanged = window.innerWidth !== lastWidth;
+      lastWidth = window.innerWidth;
+
+      // 모바일 키보드가 올라오면 너비 변화 없이 innerHeight(또는 visualViewport)만 줄어들면서
+      // resize 이벤트가 발생한다 - 이때는 실제 회전/창 크기 변경이 아니므로 재계산을 건너뛰어
+      // 입력 중 화면 전체가 다시 축소되는 것을 막는다.
+      if (isTyping && !widthChanged) return;
+
       setScale(computeFitScale());
     }
     updateScale();
     window.addEventListener("resize", updateScale);
-    return () => window.removeEventListener("resize", updateScale);
+    window.visualViewport?.addEventListener("resize", updateScale);
+    return () => {
+      window.removeEventListener("resize", updateScale);
+      window.visualViewport?.removeEventListener("resize", updateScale);
+    };
   }, []);
 
   // 우루루 성격 프롬프트는 서버(app/api/uruuru-chat)에서 관리 - 클라이언트는 대화 내용만 전달
@@ -1706,6 +1722,7 @@ export default function EmotionArchiveApp() {
               nudge={nudge}
               isThinking={isThinking}
               isGeneratingResult={isGeneratingResult}
+              scale={scale}
             />
           )}
           {screen === "processing" && (
@@ -2031,7 +2048,10 @@ function OnboardingScreen({ onDone }) {
 }
 
 
-function ChatScreen({ charLine, lastUserText, inputValue, setInputValue, onSend, showBookmark, onBookmark, nudge, isThinking, isGeneratingResult }) {
+function ChatScreen({ charLine, lastUserText, inputValue, setInputValue, onSend, showBookmark, onBookmark, nudge, isThinking, isGeneratingResult, scale }) {
+  // 캔버스 전체가 transform: scale()로 축소되어 있어도, 입력창 글씨는 화면상 항상 최소
+  // 16px 이상으로 보이도록 스케일의 역수를 곱해 보정한다(iOS 자동 확대 방지 효과도 겸함).
+  const inputFontSize = 16 / (scale > 0 ? scale : 1);
   return (
     <div
       style={{
@@ -2174,7 +2194,7 @@ function ChatScreen({ charLine, lastUserText, inputValue, setInputValue, onSend,
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <input
             className="ea-input"
-            style={{ flex: 1 }}
+            style={{ flex: 1, fontSize: inputFontSize }}
             type="text"
             placeholder="편하게 이야기해줘"
             value={inputValue}
