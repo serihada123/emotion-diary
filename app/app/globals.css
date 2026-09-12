@@ -19,6 +19,18 @@
   }
 }
 
+html,
+body {
+  /* 모바일 키보드가 뜰 때 브라우저가 포커스된 입력창을 보여주려고 문서를
+     스크롤시키면서 화면 전체가 위로 밀리는 걸 막기 위해, 문서 자체를
+     뷰포트에 고정하고 스크롤할 대상이 없게 만든다. */
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  height: 100%;
+  width: 100%;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);

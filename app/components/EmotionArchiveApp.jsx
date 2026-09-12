@@ -1381,9 +1381,18 @@ function computeFitScale() {
   return Math.min(availableWidth / DESIGN_WIDTH, availableHeight / DESIGN_HEIGHT);
 }
 
+function computeViewportSize() {
+  if (typeof window === "undefined") return { width: 0, height: 0 };
+  return { width: window.innerWidth, height: window.innerHeight };
+}
+
 /* ================= 메인 앱 ================= */
 export default function EmotionArchiveApp() {
   const [scale, setScale] = useState(1);
+  // 래퍼의 width/height를 CSS 100vw/100dvh 대신 이 값(px)으로 직접 고정한다.
+  // 100dvh는 모바일 키보드가 뜨면 브라우저가 실시간으로 줄여버릴 수 있어서,
+  // 그 안에서 중앙 정렬된 콘텐츠가 다시 정렬되며 위로 밀리는 원인이 된다.
+  const [viewportSize, setViewportSize] = useState(computeViewportSize);
   const [screen, setScreen] = useState("splash"); // splash | onboarding | chat | processing | result | archive | detail
   const [userMsgCount, setUserMsgCount] = useState(0);
   const [allUserText, setAllUserText] = useState("");
@@ -1450,6 +1459,7 @@ export default function EmotionArchiveApp() {
       if (isTyping && !widthChanged) return;
 
       setScale(computeFitScale());
+      setViewportSize(computeViewportSize());
     }
     updateScale();
     window.addEventListener("resize", updateScale);
@@ -1622,8 +1632,11 @@ export default function EmotionArchiveApp() {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        width: "100vw",
-        height: "100dvh",
+        position: "fixed",
+        top: 0,
+        left: 0,
+        width: viewportSize.width || "100vw",
+        height: viewportSize.height || "100dvh",
         overflow: "hidden",
         background: COLORS.bg,
         fontFamily: "'Jua', system-ui, sans-serif",
