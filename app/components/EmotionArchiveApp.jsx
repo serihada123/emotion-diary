@@ -1412,6 +1412,9 @@ export default function EmotionArchiveApp() {
   // setState해도 React가 "이미 그 값으로 렌더했다"고 보고 실제 DOM을 갱신하지 않는다.
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [nativeMobile, setNativeMobile] = useState(false);
+  // 모바일 키보드가 화면 아래쪽을 얼마나(px) 가리고 있는지 - 채팅 입력창을 그만큼
+  // 위로 띄워서 키보드 위에 보이게 하는 데 쓴다. 0이면 키보드가 닫혀 있는 것.
+  const [keyboardOffset, setKeyboardOffset] = useState(0);
   const [screen, setScreen] = useState("splash"); // splash | onboarding | chat | processing | result | archive | detail
   const [userMsgCount, setUserMsgCount] = useState(0);
   const [allUserText, setAllUserText] = useState("");
@@ -1490,6 +1493,26 @@ export default function EmotionArchiveApp() {
       window.visualViewport?.removeEventListener("resize", updateScale);
     };
   }, []);
+
+  // 키보드가 열려 있는 동안 캔버스 자체는 위 effect가 그대로 얼려두지만(밀림 방지),
+  // 그 결과 입력창이 얼어붙은 캔버스 하단, 즉 키보드에 가려진 자리에 그대로 남는다.
+  // visualViewport로 키보드가 가린 실제 높이(px)를 추적해서 입력창만 그만큼 띄운다.
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+
+    function updateKeyboardOffset() {
+      const covered = viewportSize.height - vv.height - vv.offsetTop;
+      setKeyboardOffset(covered > 0 ? Math.round(covered) : 0);
+    }
+    updateKeyboardOffset();
+    vv.addEventListener("resize", updateKeyboardOffset);
+    vv.addEventListener("scroll", updateKeyboardOffset);
+    return () => {
+      vv.removeEventListener("resize", updateKeyboardOffset);
+      vv.removeEventListener("scroll", updateKeyboardOffset);
+    };
+  }, [viewportSize.height]);
 
   // 우루루 성격 프롬프트는 서버(app/api/uruuru-chat)에서 관리 - 클라이언트는 대화 내용만 전달
   async function askUruuru(history, userMessage) {
@@ -1757,6 +1780,7 @@ export default function EmotionArchiveApp() {
               isThinking={isThinking}
               isGeneratingResult={isGeneratingResult}
               scale={scale}
+              keyboardOffset={keyboardOffset}
             />
           )}
           {screen === "processing" && (
@@ -1963,13 +1987,41 @@ function OnboardingScreen({ onDone }) {
   const cur = steps[step];
   const isLast = step === total - 1;
 
+  // 좌우 스와이프로도 단계 이동 - 버튼은 그대로 두고 제스처를 추가로 지원한다.
+  const touchStartRef = useRef(null);
+  const SWIPE_THRESHOLD = 40; // 이 정도(px) 이상 수평 이동해야 스와이프로 인정
+
+  function handleTouchStart(e) {
+    const t = e.touches[0];
+    touchStartRef.current = { x: t.clientX, y: t.clientY };
+  }
+
+  function handleTouchEnd(e) {
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    if (!start) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    // 수직 이동이 더 크면(위아래 스크롤 의도) 무시
+    if (Math.abs(dx) < SWIPE_THRESHOLD || Math.abs(dx) < Math.abs(dy)) return;
+    if (dx < 0) {
+      if (!isLast) setStep(step + 1);
+    } else if (step > 0) {
+      setStep(step - 1);
+    }
+  }
+
   return (
     <div
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
       style={{
         flex: 1,
         display: "flex",
         flexDirection: "column",
         background: `${COLORS.bg} url(${SKY_BG_IMG}) center bottom / cover no-repeat`,
+        touchAction: "pan-y",
       }}
     >
       <div style={{ display: "flex", justifyContent: "flex-end", padding: "10px 16px 0" }}>
@@ -2082,10 +2134,15 @@ function OnboardingScreen({ onDone }) {
 }
 
 
-function ChatScreen({ charLine, lastUserText, inputValue, setInputValue, onSend, showBookmark, onBookmark, nudge, isThinking, isGeneratingResult, scale }) {
+function ChatScreen({ charLine, lastUserText, inputValue, setInputValue, onSend, showBookmark, onBookmark, nudge, isThinking, isGeneratingResult, scale, keyboardOffset }) {
+  const safeScale = scale > 0 ? scale : 1;
   // 캔버스 전체가 transform: scale()로 축소되어 있어도, 입력창 글씨는 화면상 항상 최소
   // 16px 이상으로 보이도록 스케일의 역수를 곱해 보정한다(iOS 자동 확대 방지 효과도 겸함).
-  const inputFontSize = 16 / (scale > 0 ? scale : 1);
+  const inputFontSize = 16 / safeScale;
+  // keyboardOffset(실제 화면 px)만큼 입력창 바를 위로 띄운다. 캔버스 자체는
+  // transform: scale()로 축소돼 있으므로, 화면상 실제로 keyboardOffset만큼만
+  // 움직이려면 캔버스 좌표계(디자인 px) 기준으로는 scale로 나눈 만큼 옮겨야 한다.
+  const inputBarLift = keyboardOffset > 0 ? keyboardOffset / safeScale : 0;
   return (
     <div
       style={{
@@ -2182,7 +2239,16 @@ function ChatScreen({ charLine, lastUserText, inputValue, setInputValue, onSend,
         </div>
       </div>
 
-      <div style={{ position: "relative", background: COLORS.white, borderRadius: "20px 20px 0 0", padding: "12px 16px 16px" }}>
+      <div
+        style={{
+          position: "relative",
+          background: COLORS.white,
+          borderRadius: "20px 20px 0 0",
+          padding: "12px 16px 16px",
+          transform: inputBarLift > 0 ? `translateY(-${inputBarLift}px)` : undefined,
+          boxShadow: inputBarLift > 0 ? "0 -4px 16px rgba(0,0,0,0.12)" : undefined,
+        }}
+      >
         {showBookmark && (
           <button
             aria-label="이야기 남기기"
