@@ -1368,17 +1368,30 @@ const EMOTION_REACTION = {
 };
 
 /* 앱을 그리는 고정 캔버스 크기 - 브라우저 창 크기에 맞춰 이 캔버스 전체를 축소/확대해서
-   보여준다(내부 스크롤 없이 한 화면에 다 보이도록). 남는 여백은 배경색으로 채워짐.
-   CANVAS_MARGIN_RATIO만큼 창 가장자리에 여백을 남겨서 "떠 있는 화면"처럼 보이게 함. */
+   보여준다(내부 스크롤 없이 한 화면에 다 보이도록).
+   - 데스크톱(넓은 화면)에서는 CANVAS_MARGIN_RATIO만큼 여백을 남기고 캔버스 전체가 다
+     보이도록 축소(contain)해서 "떠 있는 폰 화면"처럼 보이게 함.
+   - 실제 모바일 기기(좁은 화면 + 터치)에서는 여백 없이, 화면을 완전히 덮도록(cover)
+     확대해서 네이티브 앱처럼 화면 전체를 채움 (비율이 안 맞는 만큼만 상/하 또는 좌/우로
+     살짝 잘림 - 왜곡은 없음). */
 const DESIGN_WIDTH = 420;
 const DESIGN_HEIGHT = 840;
-const CANVAS_MARGIN_RATIO = 0.08; // 위아래/좌우 각 8% 정도 여백
+const CANVAS_MARGIN_RATIO = 0.08; // 데스크톱: 위아래/좌우 각 8% 정도 여백
+const NATIVE_MOBILE_QUERY = "(pointer: coarse) and (max-width: 768px)";
 
-function computeFitScale() {
+function isNativeMobileMode() {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia(NATIVE_MOBILE_QUERY).matches;
+}
+
+function computeFitScale(nativeMobile) {
   if (typeof window === "undefined") return 1;
-  const availableWidth = window.innerWidth * (1 - CANVAS_MARGIN_RATIO * 2);
-  const availableHeight = window.innerHeight * (1 - CANVAS_MARGIN_RATIO * 2);
-  return Math.min(availableWidth / DESIGN_WIDTH, availableHeight / DESIGN_HEIGHT);
+  const marginRatio = nativeMobile ? 0 : CANVAS_MARGIN_RATIO;
+  const availableWidth = window.innerWidth * (1 - marginRatio * 2);
+  const availableHeight = window.innerHeight * (1 - marginRatio * 2);
+  const widthRatio = availableWidth / DESIGN_WIDTH;
+  const heightRatio = availableHeight / DESIGN_HEIGHT;
+  return nativeMobile ? Math.max(widthRatio, heightRatio) : Math.min(widthRatio, heightRatio);
 }
 
 function computeViewportSize() {
@@ -1392,7 +1405,13 @@ export default function EmotionArchiveApp() {
   // 래퍼의 width/height를 CSS 100vw/100dvh 대신 이 값(px)으로 직접 고정한다.
   // 100dvh는 모바일 키보드가 뜨면 브라우저가 실시간으로 줄여버릴 수 있어서,
   // 그 안에서 중앙 정렬된 콘텐츠가 다시 정렬되며 위로 밀리는 원인이 된다.
-  const [viewportSize, setViewportSize] = useState(computeViewportSize);
+  // 초기값은 서버 렌더링과 항상 동일한 SSR-안전 기본값으로 두고(0/false), 실제 값은
+  // 아래 useLayoutEffect(클라이언트 전용)에서 채운다 - window를 읽는 함수를 그대로
+  // useState 초기화 함수로 쓰면 서버는 기본값을, 클라이언트는 실제값을 최초 렌더에
+  // 즉시 사용하게 되어 hydration mismatch가 나고, 그 결과 이후 같은 값으로 다시
+  // setState해도 React가 "이미 그 값으로 렌더했다"고 보고 실제 DOM을 갱신하지 않는다.
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
+  const [nativeMobile, setNativeMobile] = useState(false);
   const [screen, setScreen] = useState("splash"); // splash | onboarding | chat | processing | result | archive | detail
   const [userMsgCount, setUserMsgCount] = useState(0);
   const [allUserText, setAllUserText] = useState("");
@@ -1458,7 +1477,9 @@ export default function EmotionArchiveApp() {
       // 입력 중 화면 전체가 다시 축소되는 것을 막는다.
       if (isTyping && !widthChanged) return;
 
-      setScale(computeFitScale());
+      const isNative = isNativeMobileMode();
+      setNativeMobile(isNative);
+      setScale(computeFitScale(isNative));
       setViewportSize(computeViewportSize());
     }
     updateScale();
@@ -1709,8 +1730,8 @@ export default function EmotionArchiveApp() {
           transform: `scale(${scale})`,
           background: screen === "archive" || screen === "detail" ? COLORS.archiveBg : COLORS.bg,
           overflow: "hidden",
-          borderRadius: 32,
-          boxShadow: "0 24px 60px rgba(0,0,0,0.32), 0 4px 16px rgba(0,0,0,0.18)",
+          borderRadius: nativeMobile ? 0 : 32,
+          boxShadow: nativeMobile ? "none" : "0 24px 60px rgba(0,0,0,0.32), 0 4px 16px rgba(0,0,0,0.18)",
           boxSizing: "border-box",
           display: "flex",
           flexDirection: "column",
