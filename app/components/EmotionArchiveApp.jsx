@@ -2006,7 +2006,9 @@ function OnboardingScreen({ onDone }) {
     // 수직 이동이 더 크면(위아래 스크롤 의도) 무시
     if (Math.abs(dx) < SWIPE_THRESHOLD || Math.abs(dx) < Math.abs(dy)) return;
     if (dx < 0) {
-      if (!isLast) setStep(step + 1);
+      // 마지막 단계에서는 다음 단계가 없으니, "시작하기" 버튼과 동일하게 온보딩을 종료한다.
+      if (isLast) onDone();
+      else setStep(step + 1);
     } else if (step > 0) {
       setStep(step - 1);
     }
@@ -2016,12 +2018,17 @@ function OnboardingScreen({ onDone }) {
     <div
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
+      onTouchCancel={() => { touchStartRef.current = null; }}
       style={{
         flex: 1,
         display: "flex",
         flexDirection: "column",
         background: `${COLORS.bg} url(${SKY_BG_IMG}) center bottom / cover no-repeat`,
-        touchAction: "pan-y",
+        // 이 화면은 세로 스크롤이 필요 없으므로 touchAction을 완전히 꺼서 브라우저가
+        // 살짝 대각선으로 움직이는 스와이프를 세로 팬(스크롤) 제스처로 가로채
+        // touchend 대신 touchcancel을 발생시키는 것을 막는다 - 이게 "가끔 스와이프가
+        // 씹히는" 버그의 원인이었다.
+        touchAction: "none",
       }}
     >
       <div style={{ display: "flex", justifyContent: "flex-end", padding: "10px 16px 0" }}>
@@ -2111,7 +2118,7 @@ function OnboardingScreen({ onDone }) {
         ))}
       </div>
 
-      <div style={{ padding: "0 24px 28px" }}>
+      <div style={{ padding: isLast ? "0 24px 52px" : "0 24px 28px" }}>
         <button
           onClick={() => (isLast ? onDone() : setStep(step + 1))}
           style={{
@@ -2120,9 +2127,9 @@ function OnboardingScreen({ onDone }) {
             borderRadius: 999,
             background: COLORS.ink,
             color: COLORS.white,
-            fontSize: 15,
-            fontWeight: 600,
-            padding: "13px 0",
+            fontSize: isLast ? 17 : 15,
+            fontWeight: 700,
+            padding: isLast ? "18px 0" : "13px 0",
             cursor: "pointer",
           }}
         >
@@ -2143,6 +2150,11 @@ function ChatScreen({ charLine, lastUserText, inputValue, setInputValue, onSend,
   // transform: scale()로 축소돼 있으므로, 화면상 실제로 keyboardOffset만큼만
   // 움직이려면 캔버스 좌표계(디자인 px) 기준으로는 scale로 나눈 만큼 옮겨야 한다.
   const inputBarLift = keyboardOffset > 0 ? keyboardOffset / safeScale : 0;
+  // 캐릭터/말풍선 쪽은 입력창보다 이 만큼 더 위로 밀어서, 키보드가 떠 있는 동안에도
+  // 텍스트끼리 겹치지 않을 최소한의 간격을 항상 확보한다. 입력창과 정확히 같은 값만
+  // 쓰면 스케일 반올림이나 렌더 타이밍 차이로 둘이 살짝 겹치는 경우가 있었다.
+  const KEYBOARD_CONTENT_GAP = 28;
+  const contentLift = inputBarLift > 0 ? inputBarLift + KEYBOARD_CONTENT_GAP : 0;
   return (
     <div
       style={{
@@ -2153,7 +2165,7 @@ function ChatScreen({ charLine, lastUserText, inputValue, setInputValue, onSend,
         background: `${COLORS.bg} url(${SKY_BG_IMG}) center bottom / cover no-repeat`,
       }}
     >
-      <div style={{ padding: "20px 16px 10px", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
+      <div style={{ padding: "20px 16px 10px", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", zIndex: 3 }}>
         <span style={{ fontSize: 16, color: "#FFFFFF", fontWeight: 700, textShadow: "0 1px 3px rgba(0,0,0,0.35)" }}>{CHARACTER_NAME}와 오늘 이야기</span>
       </div>
 
@@ -2169,7 +2181,21 @@ function ChatScreen({ charLine, lastUserText, inputValue, setInputValue, onSend,
           overflow: "hidden",
         }}
       >
-        <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", alignItems: "center" }}>
+        <div
+          style={{
+            position: "relative",
+            zIndex: 1,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            // 입력창과 함께(그리고 조금 더) 위로 밀어야 캐릭터가 떠오른 입력창 뒤로
+            // 가려지거나 겹치지 않는다 - 입력창만 translateY하면 흰 배경 입력창이
+            // 캐릭터/말풍선 위로 겹쳐 올라오면서 텍스트가 침범해 보이거나 캐릭터가
+            // 사라진 것처럼 보였다.
+            transform: contentLift > 0 ? `translateY(-${contentLift}px)` : undefined,
+            transition: "transform 0.22s ease-out",
+          }}
+        >
         {lastUserText && (
           <div
             style={{
@@ -2242,11 +2268,18 @@ function ChatScreen({ charLine, lastUserText, inputValue, setInputValue, onSend,
       <div
         style={{
           position: "relative",
+          zIndex: 2,
           background: COLORS.white,
           borderRadius: "20px 20px 0 0",
-          padding: "12px 16px 16px",
+          padding: "12px 16px 40px",
           transform: inputBarLift > 0 ? `translateY(-${inputBarLift}px)` : undefined,
           boxShadow: inputBarLift > 0 ? "0 -4px 16px rgba(0,0,0,0.12)" : undefined,
+          // keyboardOffset은 visualViewport resize 이벤트로 뒤늦게, 값이 순간적으로 바뀌며
+          // 들어온다. transition 없이 즉시 translateY를 적용하면 키보드가 올라오는 동안
+          // 캐릭터가 잠깐 보였다가 입력창이 그 위로 "뚝" 튀어 덮는 것처럼 보여 깜빡이는
+          // 느낌을 준다. 짧은 transition으로 부드럽게 밀어 올려 겹침이 자연스러운
+          // 슬라이드처럼 보이게 한다.
+          transition: "transform 0.22s ease-out, box-shadow 0.22s ease-out",
         }}
       >
         {showBookmark && (

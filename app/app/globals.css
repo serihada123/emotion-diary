@@ -36,3 +36,15 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Netlify의 "Netlify Badge" 사이트 설정이 켜져 있으면 우측 하단에 "Powered by
+   Netlify" 배지가 자동으로 삽입된다. 이 앱은 어디서도 netlify.com으로 링크를
+   걸지 않으므로, 혹시 대시보드 설정이 다시 켜지거나 캐시된 배포본에 배지가
+   남아있는 경우를 대비해 CSS로도 항상 숨긴다. */
+a[href*="netlify.com"],
+#netlify-badge,
+#netlify-identity-widget-badge,
+[id*="netlify-badge" i],
+[class*="netlify-badge" i] {
+  display: none !important;
+}
