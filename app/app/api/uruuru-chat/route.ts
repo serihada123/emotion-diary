@@ -1,6 +1,11 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { getClientIp, rateLimit } from "../_lib/rateLimit";
 
 const client = new Anthropic();
+
+// 같은 IP당 1분에 최대 20번 (대화라 메시지가 잦을 수 있어 넉넉하게 잡음)
+const RATE_LIMIT = 20;
+const RATE_WINDOW_MS = 60_000;
 
 const URUURU_SYSTEM_PROMPT = `너는 감정 아카이브 앱의 캐릭터 "우루루"야. 사용자가 오늘 있었던 일이나 감정을 털어놓으면 옆에서 들어주는 펭귄 친구 역할이야.
 
@@ -17,6 +22,15 @@ const URUURU_SYSTEM_PROMPT = `너는 감정 아카이브 앱의 캐릭터 "우�
 type HistoryTurn = { role: "user" | "assistant"; text: string };
 
 export async function POST(request: Request) {
+  const ip = getClientIp(request);
+  const { allowed, retryAfterSec } = rateLimit(`uruuru-chat:${ip}`, RATE_LIMIT, RATE_WINDOW_MS);
+  if (!allowed) {
+    return Response.json(
+      { error: "요청이 너무 많습니다. 잠시 후 다시 시도해주세요." },
+      { status: 429, headers: { "Retry-After": String(retryAfterSec) } }
+    );
+  }
+
   const { history, message } = (await request.json()) as {
     history?: HistoryTurn[];
     message?: string;

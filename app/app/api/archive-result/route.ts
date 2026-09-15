@@ -1,6 +1,11 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { getClientIp, rateLimit } from "../_lib/rateLimit";
 
 const client = new Anthropic();
+
+// 같은 IP당 1분에 최대 10번 (대화 1건당 한 번만 호출되는 흐름이라 더 빡빡하게 잡음)
+const RATE_LIMIT = 10;
+const RATE_WINDOW_MS = 60_000;
 
 const ARCHIVE_SYSTEM_PROMPT = `너는 감정 아카이브 앱에서, 사용자가 우루루와 나눈 대화를 보고 그 순간을 "게임 아이템 + 일기"로 변환하는 역할이야.
 
@@ -22,6 +27,15 @@ const ARCHIVE_SYSTEM_PROMPT = `너는 감정 아카이브 앱에서, 사용자�
 3. **diaryText가 제일 중요해**: 대화를 복사-붙여넣기 하지 마. 사용자가 나눈 여러 마디를 종합해서, 그 사람이 오늘 밤 일기장에 직접 쓴 것처럼 흐름 있는 글로 재구성해줘. 시간 순서, 감정의 변화, 왜 그렇게 느꼈는지가 자연스럽게 드러나야 해.`;
 
 export async function POST(request: Request) {
+  const ip = getClientIp(request);
+  const { allowed, retryAfterSec } = rateLimit(`archive-result:${ip}`, RATE_LIMIT, RATE_WINDOW_MS);
+  if (!allowed) {
+    return Response.json(
+      { error: "요청이 너무 많습니다. 잠시 후 다시 시도해주세요." },
+      { status: 429, headers: { "Retry-After": String(retryAfterSec) } }
+    );
+  }
+
   const { conversationText } = (await request.json()) as {
     conversationText?: string;
   };
