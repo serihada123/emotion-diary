@@ -604,18 +604,27 @@ function detectTopic(text) {
 const CHAR_OPENING = "오늘은 무슨 일이 있었어?";
 
 /* 화면 너비에 따른 줄바꿈은 CSS word-break: keep-all이 처리(단어 중간 끊김 방지).
-   그와 별개로, 문장 종결부호(. ! ?) 뒤에서는 항상 새 줄로 넘어가게 해서
-   짧은 문장 여러 개가 한 줄에 뭉쳐 보이지 않고 문장 단위로 읽히게 한다. */
+   그와 별개로 두 가지를 추가로 강제한다:
+   1) 문자열에 수동으로 넣어둔 \n은 그대로 줄바꿈으로 렌더링 (긴 한 문장이라
+      마침표가 끝에 한 번뿐이어서 자동으로 나눌 곳이 없을 때, 의미 단위로
+      직접 끊어줄 수 있게 함 - 온보딩 문구 등).
+   2) \n으로 나뉜 각 구간 안에서도 문장 종결부호(. ! ?) 뒤에서는 새 줄로 넘어가게 해서
+      여러 문장이 한 줄에 뭉쳐 보이지 않고 문장 단위로 읽히게 한다 (대화 말풍선 등). */
 function renderBySentence(text) {
   if (!text) return text;
-  const sentences = (text.match(/[^.!?]+[.!?]*\s*/g) || [text])
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (sentences.length <= 1) return text;
-  return sentences.map((sentence, i) => (
+  const lines = text
+    .split("\n")
+    .flatMap((line) => {
+      const sentences = (line.match(/[^.!?]+[.!?]*\s*/g) || [line])
+        .map((s) => s.trim())
+        .filter(Boolean);
+      return sentences.length > 0 ? sentences : [line];
+    });
+  if (lines.length <= 1) return text;
+  return lines.map((line, i) => (
     <React.Fragment key={i}>
       {i > 0 && <br />}
-      {sentence}
+      {line}
     </React.Fragment>
   ));
 }
@@ -1992,17 +2001,17 @@ function OnboardingScreen({ onDone }) {
     {
       kind: "hero",
       title: `안녕, 나는 ${CHARACTER_NAME}야!!`,
-      body: "오늘 있었던 일이나 지금 기분, 편하게 나한테 들려줘.",
+      body: "오늘 있었던 일이나 지금 기분,\n편하게 나한테 들려줘.",
     },
     {
       kind: "object",
       title: "이야기가 감정 오브젝트가 돼",
-      body: "너의 이야기를 듣고, 그 감정에 어울리는 작은 오브젝트와 짧은 일기로 남겨줄게.",
+      body: "너의 이야기를 듣고,\n그 감정에 어울리는 작은 오브젝트와 짧은 일기로 남겨줄게.",
     },
     {
       kind: "archive",
       title: "차곡차곡 쌓인 감정 아카이브",
-      body: "쌓인 기록은 날짜별, 감정별로 언제든 다시 꺼내볼 수 있어.",
+      body: "쌓인 기록은 날짜별, 감정별로\n언제든 다시 꺼내볼 수 있어.",
     },
   ];
   const total = steps.length;
