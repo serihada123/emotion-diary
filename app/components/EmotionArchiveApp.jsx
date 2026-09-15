@@ -603,6 +603,28 @@ function detectTopic(text) {
 
 const CHAR_OPENING = "오늘은 무슨 일이 있었어?";
 
+/* 화면 너비에 따른 줄바꿈은 CSS word-break: keep-all이 처리(단어 중간 끊김 방지).
+   그와 별개로, 문장 종결부호(. ! ?) 뒤에서는 항상 새 줄로 넘어가게 해서
+   짧은 문장 여러 개가 한 줄에 뭉쳐 보이지 않고 문장 단위로 읽히게 한다. */
+function renderBySentence(text) {
+  if (!text) return text;
+  const sentences = (text.match(/[^.!?]+[.!?]*\s*/g) || [text])
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (sentences.length <= 1) return text;
+  return sentences.map((sentence, i) => (
+    <React.Fragment key={i}>
+      {i > 0 && <br />}
+      {sentence}
+    </React.Fragment>
+  ));
+}
+
+/* CJK 기본 줄바꿈은 글자 사이 아무 데서나 끊기 때문에("입니다" -> "입니" + "다")
+   단어(어절) 중간에서 끊기지 않도록 강제한다. 너무 긴 단일 토큰(URL 등)에 대비해
+   overflowWrap도 함께 둔다. */
+const KEEP_WORDS_STYLE = { wordBreak: "keep-all", overflowWrap: "break-word" };
+
 const FOLLOWUP_POOL = {
   positive: {
     work: ["헐 대박, 일에서 좋은 일이 있었구나!! 뭐였어?", "오오 회사에서 그런 일이 있으면 하루가 다르지!! 더 말해줄래?", "와 일하다가 그런 순간 만나면 진짜 반갑지!!"],
@@ -2096,11 +2118,14 @@ function OnboardingScreen({ onDone }) {
             color: COLORS.ink,
             margin: "0 0 10px",
             textShadow: "0 1px 6px rgba(255,255,255,0.6)",
+            ...KEEP_WORDS_STYLE,
           }}
         >
-          {cur.title}
+          {renderBySentence(cur.title)}
         </h2>
-        <p style={{ fontSize: 14, color: "#3A4550", lineHeight: 1.6, margin: 0, maxWidth: 260 }}>{cur.body}</p>
+        <p style={{ fontSize: 14, color: "#3A4550", lineHeight: 1.6, margin: 0, maxWidth: 260, ...KEEP_WORDS_STYLE }}>
+          {renderBySentence(cur.body)}
+        </p>
       </div>
 
       <div style={{ display: "flex", justifyContent: "center", gap: 6, paddingBottom: 14 }}>
@@ -2211,9 +2236,10 @@ function ChatScreen({ charLine, lastUserText, inputValue, setInputValue, onSend,
               lineHeight: 1.5,
               boxShadow: "0 3px 8px rgba(0,0,0,0.08)",
               marginBottom: 10,
+              ...KEEP_WORDS_STYLE,
             }}
           >
-            {lastUserText}
+            {renderBySentence(lastUserText)}
           </div>
         )}
 
@@ -2230,6 +2256,7 @@ function ChatScreen({ charLine, lastUserText, inputValue, setInputValue, onSend,
               maxWidth: 230,
               textAlign: "center",
               boxShadow: "0 3px 8px rgba(0,0,0,0.08)",
+              ...KEEP_WORDS_STYLE,
             }}
           >
             {isThinking ? (
@@ -2239,7 +2266,7 @@ function ChatScreen({ charLine, lastUserText, inputValue, setInputValue, onSend,
                 <span></span>
               </span>
             ) : (
-              charLine
+              renderBySentence(charLine)
             )}
           </div>
         </div>
