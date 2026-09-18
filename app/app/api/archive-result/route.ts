@@ -1,7 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { getClientIp, rateLimit } from "../_lib/rateLimit";
-
-const client = new Anthropic();
+import { isArchiveResult, isRecord, isText } from "../_lib/validation";
 
 // 같은 IP당 1분에 최대 10번 (대화 1건당 한 번만 호출되는 흐름이라 더 빡빡하게 잡음)
 const RATE_LIMIT = 10;
@@ -22,7 +21,7 @@ const ARCHIVE_SYSTEM_PROMPT = `너는 감정 아카이브 앱에서, 사용자�
 }
 
 중요한 원칙:
-1. **objectType은 대화 속 구체적인 내용과 연결**해서 골라줘. 예: 뭔가 해결/발견했으면 key나 wand, 축하할 일이면 trophy나 gift, 편안한 순간이면 moon이나 cloud, 힘든 감정을 견딘 순간이면 hourglass나 candle, 뜻밖의 좋은 일이면 chest나 coin.
+1. **objectType은 대화 속 구체적인 내용과 연결**해서 골라줘. 예: 뭔가 해결/발견했으면 key나 wand, 축하할 일이면 trophy나 gift, 편안한 순간이면 book이나 lantern, 힘든 감정을 견딘 순간이면 hourglass나 candle, 뜻밖의 좋은 일이면 chest나 coin.
 2. **objectName과 oneLine은 뭉뚱그린 감정 표현("힘들었던 순간" 같은) 말고, 대화에 나온 구체적인 디테일(누구와, 무슨 일, 무슨 말)을 살짝 녹여서** 이 대화만의 특징이 드러나게 만들어줘. 다른 대화에도 똑같이 쓸 수 있을 법한 뻔한 표현은 피해줘.
 3. **diaryText가 제일 중요해**: 대화를 복사-붙여넣기 하지 마. 사용자가 나눈 여러 마디를 종합해서, 그 사람이 오늘 밤 일기장에 직접 쓴 것처럼 흐름 있는 글로 재구성해줘. 시간 순서, 감정의 변화, 왜 그렇게 느꼈는지가 자연스럽게 드러나야 해.`;
 
@@ -36,21 +35,28 @@ export async function POST(request: Request) {
     );
   }
 
-  const { conversationText } = (await request.json()) as {
-    conversationText?: string;
-  };
-
-  if (!conversationText || typeof conversationText !== "string") {
-    return Response.json({ error: "conversationText가 필요합니다" }, { status: 400 });
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ error: "올바른 JSON 요청이 필요합니다" }, { status: 400 });
   }
+  if (!isRecord(body) || !isText(body.conversationText, 20_000)) {
+    return Response.json({ error: "conversationText는 1~20000자의 문자열이어야 합니다" }, { status: 400 });
+  }
+  const { conversationText } = body;
 
   try {
+    const client = new Anthropic({ timeout: 25_000, maxRetries: 0 });
     const response = await client.messages.create({
       model: "claude-sonnet-5",
-      max_tokens: 400,
+      max_tokens: 1000,
       system: ARCHIVE_SYSTEM_PROMPT,
       messages: [{ role: "user", content: `대화 내용: ${conversationText}` }],
     });
+    if (response.stop_reason === "max_tokens") {
+      return Response.json({ error: "AI 응답이 완성되지 않았습니다. 다시 시도해주세요." }, { status: 502 });
+    }
     const text = response.content
       .map((c) => (c.type === "text" ? c.text : ""))
       .join("")
@@ -63,10 +69,13 @@ export async function POST(request: Request) {
     } catch {
       return Response.json({ error: "AI 응답이 JSON이 아님" }, { status: 502 });
     }
+    if (!isArchiveResult(parsed)) {
+      return Response.json({ error: "AI 응답 형식이 올바르지 않습니다" }, { status: 502 });
+    }
     return Response.json(parsed);
-  } catch (err) {
+  } catch {
     return Response.json(
-      { error: err instanceof Error ? err.message : "AI 호출 실패" },
+      { error: "AI 결과를 생성하지 못했습니다. 잠시 후 다시 시도해주세요." },
       { status: 502 }
     );
   }

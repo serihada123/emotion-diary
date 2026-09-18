@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect, useLayoutEffect, useId } from "react";
+import { getEntryDate, readArchive } from "../lib/archive-storage.mjs";
 
 /* ---------- 캐릭터 이름 ---------- */
 const CHARACTER_NAME = "우루루";
@@ -1459,6 +1460,8 @@ export default function EmotionArchiveApp() {
   const [isGeneratingResult, setIsGeneratingResult] = useState(false);
   const [archive, setArchive] = useState(INITIAL_ARCHIVE);
   const [archiveLoaded, setArchiveLoaded] = useState(false); // 저장소에서 최초 로드 완료 여부 (로드 전 덮어쓰기 방지)
+  const [storageError, setStorageError] = useState("");
+  const requestBusy = useRef(false);
   const [draftResult, setDraftResult] = useState(RESULT_TEMPLATES.neutral[0]);
   const [detailEntry, setDetailEntry] = useState(null);
   const [processingStage, setProcessingStage] = useState(0); // 0 idle,1 fly,2 react,3 settle,4 done
@@ -1467,17 +1470,13 @@ export default function EmotionArchiveApp() {
   // 앱 시작 시 저장된 아카이브 불러오기 (없으면 기본 샘플 데이터 유지)
   useEffect(() => {
     try {
-      const raw = localStorage.getItem("emotion-archive-entries");
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setArchive(parsed);
-        }
-      }
-    } catch (err) {
-      // 저장된 값이 없거나(최초 실행) 파싱 실패 -> 기본 샘플 데이터 그대로 사용
-    } finally {
+      // 브라우저 저장소는 SSR 이후에만 읽는다. 빈 배열도 사용자의 저장된 상태다.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setArchive(readArchive(localStorage.getItem("emotion-archive-entries"), INITIAL_ARCHIVE));
       setArchiveLoaded(true);
+    } catch {
+      setArchive([]);
+      setStorageError("기록을 불러오지 못했어. 기존 기록 보호를 위해 저장을 멈췄어. 브라우저 저장 설정을 확인해줘.");
     }
   }, []);
 
@@ -1486,13 +1485,16 @@ export default function EmotionArchiveApp() {
     if (!archiveLoaded) return;
     try {
       localStorage.setItem("emotion-archive-entries", JSON.stringify(archive));
-    } catch (err) {
-      // 저장 실패해도(용량 초과 등) 화면 사용엔 지장 없도록 조용히 무시
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setStorageError("");
+    } catch {
+      setStorageError("기록을 이 기기에 저장하지 못했어. 새로고침하면 방금 변경한 기록이 사라질 수 있어.");
     }
   }, [archive, archiveLoaded]);
 
   useEffect(() => {
-    return () => timers.current.forEach(clearTimeout);
+    const pendingTimers = timers.current;
+    return () => pendingTimers.forEach(clearTimeout);
   }, []);
 
   // 브라우저 창 크기가 바뀔 때마다 캔버스 축소/확대 비율 재계산 (스크롤 없이 항상 한 화면에 맞춤)
@@ -1548,6 +1550,7 @@ export default function EmotionArchiveApp() {
   // 우루루 성격 프롬프트는 서버(app/api/uruuru-chat)에서 관리 - 클라이언트는 대화 내용만 전달
   async function askUruuru(history, userMessage) {
     const response = await fetch("/api/uruuru-chat", {
+      signal: AbortSignal.timeout(30_000),
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1557,13 +1560,14 @@ export default function EmotionArchiveApp() {
     });
     if (!response.ok) throw new Error("우루루 응답 요청 실패");
     const data = await response.json();
-    if (!data.text) throw new Error("빈 응답");
+    if (typeof data.text !== "string" || !data.text.trim()) throw new Error("빈 응답");
     return data.text;
   }
 
   async function handleSend() {
     const text = inputValue.trim();
-    if (!text) return;
+    if (!text || requestBusy.current) return;
+    requestBusy.current = true;
     setInputValue("");
 
     const casualKey = detectCasual(text);
@@ -1585,26 +1589,28 @@ export default function EmotionArchiveApp() {
       const reply = await askUruuru(historyForApi, text);
       setCharLine(reply);
       setChatHistory((h) => [...h, { role: "user", text }, { role: "assistant", text: reply }]);
-    } catch (err) {
+    } catch {
       // API 호출 실패 시 기존 대사 풀로 자연스럽게 대체 (오프라인/네트워크 제한 환경 대비)
       let fallback;
       if (greetingNow) fallback = pickLine(GREETING_REPLIES);
       else if (casualKey) fallback = pickLine(CASUAL_REPLIES[casualKey], charLine);
       else {
-        const sentiment = detectSentiment(allUserText);
-        const topic = sessionTopic;
+        const sentiment = detectSentiment(allUserText + " " + text);
+        const topic = sessionTopic || detectTopic(text);
         fallback = userMsgCount <= 1 ? getFollowup(sentiment, topic) : getDeeper(sentiment, topic, charLine);
       }
       setCharLine(fallback);
       setChatHistory((h) => [...h, { role: "user", text }, { role: "assistant", text: fallback }]);
     } finally {
+      requestBusy.current = false;
       setIsThinking(false);
       setNudge(true);
-      setTimeout(() => setNudge(false), 500);
+      timers.current.push(setTimeout(() => setNudge(false), 500));
     }
   }
 
   function resetSession() {
+    setInputValue("");
     setUserMsgCount(0);
     setAllUserText("");
     setLastUserText("");
@@ -1616,6 +1622,7 @@ export default function EmotionArchiveApp() {
   // 대화 -> 감정 오브젝트 변환 프롬프트는 서버(app/api/archive-result)에서 관리
   async function generateArchiveResult(conversationText) {
     const response = await fetch("/api/archive-result", {
+      signal: AbortSignal.timeout(35_000),
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ conversationText }),
@@ -1645,16 +1652,19 @@ export default function EmotionArchiveApp() {
   }
 
   async function startProcessing() {
+    if (requestBusy.current || !allUserText.trim()) return;
+    requestBusy.current = true;
     setIsGeneratingResult(true);
     let result;
     try {
-      result = await generateArchiveResult(allUserText);
-    } catch (err) {
+      result = await generateArchiveResult(allUserText.slice(-20_000));
+    } catch {
       // AI 생성 실패 시(네트워크 제한 등) 기존 템플릿 방식으로 자연스럽게 대체
       const sentiment = detectSentiment(allUserText);
       result = buildResult(sentiment, allUserText);
     }
     setIsGeneratingResult(false);
+    requestBusy.current = false;
 
     const cleanedStory = allUserText.trim() || "오늘 있었던 일";
     const sentimentForClosing = detectSentiment(allUserText);
@@ -1671,17 +1681,21 @@ export default function EmotionArchiveApp() {
   }
 
   function saveToArchive() {
+    if (!archiveLoaded) return;
+    const createdAt = new Date().toISOString();
     const newEntry = {
       id: "new-" + Date.now(),
-      date: "오늘",
       ...draftResult,
+      createdAt,
+      date: getEntryDate({ createdAt }),
     };
-    setArchive([newEntry, ...archive]);
+    setArchive((previous) => [newEntry, ...previous]);
     resetSession();
     setScreen("archive");
   }
 
   function resetArchive() {
+    if (!archiveLoaded) return;
     setArchive(INITIAL_ARCHIVE);
   }
 
@@ -1691,11 +1705,13 @@ export default function EmotionArchiveApp() {
   }
 
   function updateEntry(id, updatedFields) {
+    if (!archiveLoaded) return;
     setArchive((prev) => prev.map((e) => (e.id === id ? { ...e, ...updatedFields } : e)));
     setDetailEntry((prev) => (prev && prev.id === id ? { ...prev, ...updatedFields } : prev));
   }
 
   function deleteEntry(id) {
+    if (!archiveLoaded) return;
     setArchive((prev) => prev.filter((e) => e.id !== id));
     setDetailEntry(null);
     setScreen("archive");
@@ -1791,6 +1807,7 @@ export default function EmotionArchiveApp() {
           flexDirection: "column",
         }}
       >
+        {storageError && <div role="alert" style={{ padding: "8px 14px", background: "#fff3d6", color: COLORS.ink, fontSize: 12 }}>{storageError}</div>}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
           {screen === "splash" && (
             <SplashScreen onDone={() => setScreen("onboarding")} />
@@ -1842,7 +1859,7 @@ export default function EmotionArchiveApp() {
         </div>
 
         {(screen === "chat" || screen === "archive") && (
-          <BottomNav screen={screen} setScreen={setScreen} />
+          <BottomNav screen={screen} setScreen={setScreen} disabled={isThinking || isGeneratingResult} />
         )}
       </div>
     </div>
@@ -2135,6 +2152,12 @@ function OnboardingScreen({ onDone }) {
         <p style={{ fontSize: 14, color: "#3A4550", lineHeight: 1.6, margin: 0, maxWidth: 260, ...KEEP_WORDS_STYLE }}>
           {renderBySentence(cur.body)}
         </p>
+        {cur.kind === "hero" && (
+          <p style={{ fontSize: 12, color: "#3A4550", margin: "16px 0 0", ...KEEP_WORDS_STYLE }}>
+            1인 개발자가 직접 만든 감정일기예요.
+          </p>
+        )}
+        {cur.kind === "archive" && <StorageNotice />}
       </div>
 
       <div style={{ display: "flex", justifyContent: "center", gap: 6, paddingBottom: 14 }}>
@@ -2176,6 +2199,7 @@ function OnboardingScreen({ onDone }) {
 
 
 function ChatScreen({ charLine, lastUserText, inputValue, setInputValue, onSend, showBookmark, onBookmark, nudge, isThinking, isGeneratingResult, scale, keyboardOffset }) {
+  const composing = useRef(false);
   const safeScale = scale > 0 ? scale : 1;
   // 캔버스 전체가 transform: scale()로 축소되어 있어도, 입력창 글씨는 화면상 항상 최소
   // 16px 이상으로 보이도록 스케일의 역수를 곱해 보정한다(iOS 자동 확대 방지 효과도 겸함).
@@ -2321,7 +2345,8 @@ function ChatScreen({ charLine, lastUserText, inputValue, setInputValue, onSend,
         {showBookmark && (
           <button
             aria-label="이야기 남기기"
-            onClick={isGeneratingResult ? undefined : onBookmark}
+            onClick={onBookmark}
+            disabled={isThinking || isGeneratingResult}
             className="ea-btn bookmark-pop"
             style={{
               position: "absolute",
@@ -2367,11 +2392,21 @@ function ChatScreen({ charLine, lastUserText, inputValue, setInputValue, onSend,
             type="text"
             placeholder="편하게 이야기해줘"
             value={inputValue}
+            maxLength={2000}
+            disabled={isThinking || isGeneratingResult}
+            onCompositionStart={() => { composing.current = true; }}
+            onCompositionEnd={() => { composing.current = false; }}
             onChange={(e) => setInputValue(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && onSend()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !composing.current && !e.nativeEvent.isComposing && e.keyCode !== 229) {
+                e.preventDefault();
+                onSend();
+              }
+            }}
           />
           <button
             aria-label="전송"
+            disabled={isThinking || isGeneratingResult || !inputValue.trim()}
             onClick={onSend}
             className="ea-btn"
             style={{
@@ -2594,6 +2629,16 @@ function ResultScreen({ result, setResult, onSave }) {
 }
 
 /* ---------- 화면 4: 감정 아카이브 (날짜별 리스트 + 필터) ---------- */
+function StorageNotice() {
+  return (
+    <p style={{ fontSize: 11, lineHeight: 1.5, color: "#3A4550", margin: "10px 18px", textAlign: "center", ...KEEP_WORDS_STYLE }}>
+      완성된 기록은 이 기기의 브라우저에만 저장되며,<br />서비스 서버에는 보관하지 않아요.<br />
+      AI 대화·일기 생성을 위해 대화 내용은 AI 제공업체로 전송돼요.<br />
+      브라우저 데이터를 지우면 기록도 사라져요.
+    </p>
+  );
+}
+
 function ArchiveScreen({ entries, onOpen, onReset }) {
   const [filterMode, setFilterMode] = useState("all"); // all | date | emotion
   const [dateOrder, setDateOrder] = useState("desc"); // desc: 최신순, asc: 오래된순
@@ -2872,6 +2917,7 @@ function ArchiveScreen({ entries, onOpen, onReset }) {
           </div>
         )}
       </div>
+      <StorageNotice />
     </div>
   );
 }
@@ -2908,7 +2954,7 @@ function DetailScreen({ entry, onBack, onUpdate, onDelete }) {
         <button onClick={onBack} style={{ border: "none", background: "none", fontSize: 16, cursor: "pointer" }} aria-label="뒤로">
           ←
         </button>
-        <p style={{ fontSize: 13, color: "#4A5A63", margin: 0 }}>{entry.date}</p>
+        <p style={{ fontSize: 13, color: "#4A5A63", margin: 0 }}>{getEntryDate(entry)}</p>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "10px 20px 20px" }}>
@@ -3024,7 +3070,7 @@ function DetailScreen({ entry, onBack, onUpdate, onDelete }) {
 }
 
 /* ---------- 하단 내비게이션 (프로토타입 편의용) ---------- */
-function BottomNav({ screen, setScreen }) {
+function BottomNav({ screen, setScreen, disabled }) {
   const items = [
     { key: "chat", label: "대화" },
     { key: "archive", label: "아카이브" },
@@ -3034,6 +3080,7 @@ function BottomNav({ screen, setScreen }) {
       {items.map((it) => (
         <button
           key={it.key}
+          disabled={disabled}
           onClick={() => setScreen(it.key)}
           style={{
             flex: 1,

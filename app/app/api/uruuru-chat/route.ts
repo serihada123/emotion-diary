@@ -1,7 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { getClientIp, rateLimit } from "../_lib/rateLimit";
-
-const client = new Anthropic();
+import { isRecord, isText } from "../_lib/validation";
 
 // 같은 IP당 1분에 최대 20번 (대화라 메시지가 잦을 수 있어 넉넉하게 잡음)
 const RATE_LIMIT = 20;
@@ -31,17 +30,24 @@ export async function POST(request: Request) {
     );
   }
 
-  const { history, message } = (await request.json()) as {
-    history?: HistoryTurn[];
-    message?: string;
-  };
-
-  if (!message || typeof message !== "string") {
-    return Response.json({ error: "message가 필요합니다" }, { status: 400 });
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ error: "올바른 JSON 요청이 필요합니다" }, { status: 400 });
+  }
+  if (!isRecord(body) || !isText(body.message, 2000)) {
+    return Response.json({ error: "message는 1~2000자의 문자열이어야 합니다" }, { status: 400 });
+  }
+  const { message, history = [] } = body;
+  if (!Array.isArray(history) || history.length > 10 || !history.every((turn) =>
+    isRecord(turn) && (turn.role === "user" || turn.role === "assistant") && isText(turn.text, 2000)
+  )) {
+    return Response.json({ error: "올바른 대화 기록이 필요합니다" }, { status: 400 });
   }
 
   const messages: Anthropic.MessageParam[] = [
-    ...(Array.isArray(history) ? history : []).map((h) => ({
+    ...(history as HistoryTurn[]).map((h) => ({
       role: h.role,
       content: h.text,
     })),
@@ -49,6 +55,7 @@ export async function POST(request: Request) {
   ];
 
   try {
+    const client = new Anthropic({ timeout: 20_000, maxRetries: 0 });
     const response = await client.messages.create({
       model: "claude-sonnet-5",
       max_tokens: 150,
@@ -63,9 +70,9 @@ export async function POST(request: Request) {
       return Response.json({ error: "빈 응답" }, { status: 502 });
     }
     return Response.json({ text });
-  } catch (err) {
+  } catch {
     return Response.json(
-      { error: err instanceof Error ? err.message : "AI 호출 실패" },
+      { error: "AI 응답을 받지 못했습니다. 잠시 후 다시 시도해주세요." },
       { status: 502 }
     );
   }
